@@ -144,3 +144,24 @@ test("failed backup replacement leaves the original intact and cleans temporary 
   assert.equal(await readFile(path, "utf8"), old);
   assert.ok(!(await readdir(agentDir)).some((name) => name.endsWith(".tmp")));
 });
+
+test("carryPartial accepts exactly the three modes and defaults to nothing", async (t) => {
+  const agentDir = await directory(t);
+  for (const mode of ["off", "cross-provider", "always"]) {
+    await writeFile(join(agentDir, "refusal-fallback.json"), JSON.stringify({ chain, carryPartial: mode }));
+    assert.equal(readConfiguration({ agentDir, env: {} }).carryPartial, mode);
+  }
+  await writeFile(join(agentDir, "refusal-fallback.json"), JSON.stringify({ chain }));
+  assert.equal(readConfiguration({ agentDir, env: {} }).carryPartial, undefined);
+  for (const bad of ["ALWAYS", "cross_provider", "yes", true, 1, null, ["always"], {}, ""]) {
+    await writeFile(join(agentDir, "refusal-fallback.json"), JSON.stringify({ chain, carryPartial: bad }));
+    assert.throws(() => readConfiguration({ agentDir, env: {} }), /carryPartial option must be off, cross-provider or always/, JSON.stringify(bad));
+  }
+});
+
+test("carryPartial survives a setup save round trip", async (t) => {
+  const agentDir = await directory(t);
+  await saveConfiguration({ agentDir, env: {} }, { chain, carryPartial: "cross-provider", showStatus: false });
+  assert.deepEqual(readConfiguration({ agentDir, env: {} }), { source: "file", chain, carryPartial: "cross-provider", showStatus: false });
+  await assert.rejects(saveConfiguration({ agentDir, env: {} }, { chain, carryPartial: "sometimes" }), /carryPartial/);
+});

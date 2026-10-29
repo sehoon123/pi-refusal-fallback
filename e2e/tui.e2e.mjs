@@ -65,11 +65,26 @@ try {
   const saved = JSON.parse(await readFile(join(agent, "refusal-fallback.json"), "utf8"));
   assert.deepEqual(saved.chain, [{ provider: "mock-p5", id: "org/nested-0" }, { provider: "mock-p5", id: "org/nested-1" }]);
 
+  // The partial-output handoff setting: cycle off -> cross-provider, see its explanation, save, and check the file.
+  keys("-l", "/refusal-fallback setup");
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  keys("Enter");
+  await waitFor(/Order \(2\)/, "setup reopened with the saved order");
+  keys("Tab", "Tab", "Down", "Down", "Down");
+  const options = await waitFor(/Pass interrupted partial output to the next model: off/, "the handoff row");
+  assert.match(options.replace(/\s+/g, " "), /the same provider would likely refuse again/, "the highlighted setting is explained");
+  keys("Enter");
+  await waitFor(/next model: cross-provider/, "the handoff mode after one Enter");
+  keys("C-s");
+  await waitFor(/Saved 2 fallback model\(s\)/, "the second save");
+  assert.equal(JSON.parse(await readFile(join(agent, "refusal-fallback.json"), "utf8")).carryPartial, "cross-provider");
+
   keys("-l", "/refusal-fallback status");
   await new Promise((resolve) => setTimeout(resolve, 500));
   keys("Enter");
   await waitFor(/1\. mock-p5\/org\/nested-0\n\s*2\. mock-p5\/org\/nested-1/, "the status list");
-  console.log("PASS: real pi TUI — single-Enter open, long-list scrolling, filter, save and status.");
+  await waitFor(/Partial output handoff: cross-provider/, "the handoff mode in status");
+  console.log("PASS: real pi TUI — single-Enter open, long-list scrolling, filter, save, handoff setting and status.");
 } catch (error) {
   failed = error;
 } finally {

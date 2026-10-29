@@ -1,6 +1,17 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+
+- **Partial output handoff** (`carryPartial`: `off` | `cross-provider` | `always`, default `off`). When a response is cut off by a refusal, its visible reasoning and answer text can be passed to the next model as clearly labelled, untrusted notes. `cross-provider` passes them only when the next model uses a different provider id.
+  - Appended to the single next request only, newest interruption only, capped at 8,000 / 4,000 characters (newest part kept), delimiter-safe, never written to the session. Redacted reasoning, signed reasoning blocks and unexecuted tool calls are not passed.
+  - **Withdrawal:** if the model that received notes refuses before writing anything, it is retried once without them before the chain moves on. Found in a real gateway test where Claude -> Claude handoff was blocked as "duplicating model outputs".
+  - Setup editor: new choice setting in Options with an explanation of the highlighted value; page-by-page setup and `/refusal-fallback status` show it; the transcript notice, last-run summary and session metadata (counts only) record when notes were passed or rejected.
+- 135 offline tests; the real-terminal test also covers the new setting.
+
 ## 0.3.0
+
 
 ### Fixed
 

@@ -17,7 +17,7 @@ const catalog = (count) => Array.from({ length: count }, (_, i) => ({
 
 function picker({ models = catalog(60), chain = [], options, rows = 24, limit = 128 } = {}) {
   const editor = new ChainEditor({ catalog: models, chain, limit,
-    options: options ?? { retryMessages: true, showStatus: true, notifications: true } });
+    options: options ?? { retryMessages: true, showStatus: true, notifications: true, carryPartial: "off" } });
   let result;
   let renders = 0;
   const host = { terminal: { rows, columns: 100 }, requestRender: () => { renders += 1; } };
@@ -174,7 +174,7 @@ test("Tab, Shift+Tab and Left/Right move between sections without losing state",
 test("Options tab toggles by Enter and Space and reports them on Review", () => {
   const p = picker();
   p.send(KEY.tab, KEY.tab, KEY.enter, KEY.down, " ");
-  assert.deepEqual(p.editor.options, { retryMessages: false, showStatus: false, notifications: true });
+  assert.deepEqual(p.editor.options, { retryMessages: false, showStatus: false, notifications: true, carryPartial: "off" });
   p.send(KEY.tab);
   assert.match(p.text(), /Settings: notices off · status off · warnings on/);
 });
@@ -264,7 +264,7 @@ test("application-cursor arrows and mixed-case Kitty-style input do not break na
 
 test("a throwing host callback is contained: the screen closes cleanly", () => {
   const editor = new ChainEditor({ catalog: catalog(3), chain: [], limit: 128,
-    options: { retryMessages: true, showStatus: true, notifications: true } });
+    options: { retryMessages: true, showStatus: true, notifications: true, carryPartial: "off" } });
   let result;
   const component = new ChainPicker(editor, {
     host: { requestRender: () => { throw new Error("render failed"); } }, theme, keybindings,
@@ -285,7 +285,7 @@ test("input after completion is ignored", () => {
 
 test("themes that throw for a colour name still render readable text", () => {
   const editor = new ChainEditor({ catalog: catalog(5), chain: [], limit: 128,
-    options: { retryMessages: true, showStatus: true, notifications: true } });
+    options: { retryMessages: true, showStatus: true, notifications: true, carryPartial: "off" } });
   const component = new ChainPicker(editor, {
     host: { requestRender() {} }, theme: { fg() { throw new Error("unknown colour"); }, bold: () => { throw new Error("no bold"); } },
     keybindings, done() {}, file: "x",
@@ -329,4 +329,42 @@ test("clicking a tab title switches sections", () => {
   p.component.handleMouse(mouse({ y: 1, x: p.screen()[1].indexOf("Order") }));
   assert.equal(p.editor.tab, "order");
   assert.equal(p.component.handleMouse(mouse({ type: "move", button: "none" })), undefined);
+});
+
+test("the handoff setting cycles off -> cross-provider -> always -> off and explains itself", () => {
+  const p = picker();
+  p.send(KEY.tab, KEY.tab, KEY.down, KEY.down, KEY.down);
+  assert.match(p.text(), /→ Pass interrupted partial output to the next model: off/);
+  assert.match(p.text().replace(/\s+/g, " "), /same provider would likely refuse again/, "the highlighted setting is explained");
+  p.send(KEY.enter);
+  assert.equal(p.editor.options.carryPartial, "cross-provider");
+  p.send(" ");
+  assert.equal(p.editor.options.carryPartial, "always");
+  p.send(KEY.enter);
+  assert.equal(p.editor.options.carryPartial, "off");
+  assert.equal(p.editor.dirty, false, "returning to the original value is not a change");
+  p.send(KEY.enter, KEY.tab);
+  assert.match(p.text(), /Settings: notices on · status on · warnings on · partial output: cross-provider/);
+});
+
+test("the explanation of the highlighted setting follows the cursor and wraps to any width", () => {
+  for (const width of [24, 40, 60, 92]) {
+    const p = picker();
+    p.send(KEY.tab, KEY.tab);
+    const first = p.screen(width).join("\n");
+    assert.match(first, /never sent to a model|shown to you only/i);
+    p.send(KEY.down, KEY.down, KEY.down);
+    const choice = p.screen(width);
+    assert.ok(choice.every((line) => visibleWidth(line) <= width), `width ${width}`);
+    assert.match(choice.join(" "), /cross-provider/);
+  }
+});
+
+test("clicking the handoff row selects it and a second click cycles it", () => {
+  const p = picker();
+  p.send(KEY.tab, KEY.tab);
+  p.component.handleMouse(mouse({ y: 3 + 3 }));
+  assert.equal(p.editor.cursor(), 3);
+  p.component.handleMouse(mouse({ y: 3 + 3 }));
+  assert.equal(p.editor.options.carryPartial, "cross-provider");
 });

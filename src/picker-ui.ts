@@ -1,5 +1,5 @@
-import { Input, Key, matchesKey, truncateToWidth, visibleWidth, type Component, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
-import { ChainEditor, OPTION_ROWS, TABS, type SetupResult, type Tab } from "./picker-model.ts";
+import { Input, Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
+import { ChainEditor, OPTION_ROWS, optionValue, TABS, type SetupResult, type Tab } from "./picker-model.ts";
 import { modelLabel } from "./refusal.ts";
 
 export interface PickerHost {
@@ -71,12 +71,13 @@ export class ChainPicker implements Component {
       fit(this.tabBar()),
       fit(this.promptLine()),
     ];
-    const list = editor.tab === "review" ? this.reviewLines(rows) : this.listLines(rows);
+    const list = editor.tab === "review" ? this.reviewLines(rows) : this.listLines(rows, width);
     // Only the searchable list keeps a fixed height, so typing a filter does not make the screen jump.
     // Short tabs stay compact instead of leaving a tall empty gap.
     const height = editor.tab === "models" ? rows : Math.min(rows, 4);
     while (list.length < height) list.push("");
-    out.push(...list.slice(0, rows).map(fit));
+    // Options explain the highlighted row below the list, so they may use a little more than the usual four lines.
+    out.push(...list.slice(0, editor.tab === "options" ? Math.max(rows, 9) : rows).map(fit));
     out.push(fit(this.indicator(rows)));
     out.push("");
     out.push(fit(this.summary()));
@@ -107,7 +108,7 @@ export class ChainPicker implements Component {
       return `Filter: ${filter}${this.paint("dim", `   ${editor.models.length}/${editor.catalogSize}`)}`;
     }
     if (editor.tab === "order") return this.paint("dim", "Fallbacks are tried from top to bottom after a refusal.");
-    if (editor.tab === "options") return this.paint("dim", "Enter or Space changes the highlighted setting.");
+    if (editor.tab === "options") return this.paint("dim", "Enter or Space changes the highlighted setting (choices cycle).");
     return this.paint("dim", "Check the result, then press Enter to save.");
   }
 
@@ -115,7 +116,7 @@ export class ChainPicker implements Component {
     return selected ? this.paint("accent", marker) + this.paint("accent", text) : `  ${text}`;
   }
 
-  private listLines(rows: number): string[] {
+  private listLines(rows: number, width: number): string[] {
     const editor = this.editor;
     const { top, end } = editor.window(rows);
     const cursor = editor.cursor();
@@ -138,9 +139,10 @@ export class ChainPicker implements Component {
         lines.push(this.row(index === cursor, text, editor.grabbed && index === cursor ? "↕ " : "→ ") + suffix);
       }
     } else {
-      OPTION_ROWS.forEach((option, index) => {
-        lines.push(this.row(index === cursor, `[${editor.options[option.key] ? "x" : " "}] ${option.label}`));
-      });
+      OPTION_ROWS.forEach((option, index) => lines.push(this.row(index === cursor, optionValue(editor.options, option))));
+      // Explain the highlighted setting; wrapped so it stays readable on narrow terminals and in pi-web.
+      lines.push("");
+      for (const line of wrapTextWithAnsi(OPTION_ROWS[cursor]?.hint ?? "", Math.max(20, width - 2)).slice(0, 4)) lines.push(this.paint("dim", `  ${line}`));
     }
     return lines;
   }
@@ -155,7 +157,7 @@ export class ChainPicker implements Component {
     chain.slice(0, capacity).forEach((item, index) => lines.push(`  ${String(index + 1).padStart(2)}. ${modelLabel(item)}${item.available ? "" : "  (unavailable)"}`));
     if (chain.length > capacity) lines.push(this.paint("dim", `  … and ${chain.length - capacity} more`));
     const on = (value: boolean): string => (value ? "on" : "off");
-    lines.push(this.paint("dim", `Settings: notices ${on(editor.options.retryMessages)} · status ${on(editor.options.showStatus)} · warnings ${on(editor.options.notifications)}`));
+    lines.push(this.paint("dim", `Settings: notices ${on(editor.options.retryMessages)} · status ${on(editor.options.showStatus)} · warnings ${on(editor.options.notifications)} · partial output: ${editor.options.carryPartial}`));
     lines.push(this.paint("warning", "Every listed provider receives the conversation context."));
     lines.push(this.paint("dim", `File: ${this.context.file}  (an existing file is kept as .bak)`));
     return lines;

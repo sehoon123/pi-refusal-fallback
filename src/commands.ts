@@ -18,7 +18,7 @@ const SUBCOMMANDS = [
   { value: "setup", label: "setup", description: "Choose, search and reorder fallback models" },
   { value: "reload", label: "reload", description: "Re-read the configuration while idle" },
 ];
-const OPTION_KEYS = ["retryMessages", "showStatus", "notifications"] as const;
+const OPTION_KEYS = ["retryMessages", "showStatus", "notifications", "carryPartial"] as const;
 const sameChain = (a: readonly ChainEntry[], b: readonly ChainEntry[]): boolean =>
   a.length === b.length && a.every((entry, index) => modelKey(entry) === modelKey(b[index]));
 
@@ -48,6 +48,7 @@ export function registerCommands(pi: ExtensionAPI, agentDir: string, state: Comm
           : config.chain.length ? `Source: ${config.source}` : "Disabled: no fallback models configured";
         const text = [`[refusal-fallback] ${headline}`, ...lines,
           `Retry notices: ${config.retryMessages === false ? "hidden" : "shown"} · status: ${config.showStatus === false ? "off" : "on"} · warnings: ${config.notifications === false ? "off" : "on"}`,
+          `Partial output handoff: ${config.carryPartial ?? "off"}`,
           ...(state.getLastSummary() ? [state.getLastSummary()!] : []),
           `File: ${file()}`,
           "Use /refusal-fallback setup to change the order."].join("\n");
@@ -90,6 +91,7 @@ export function registerCommands(pi: ExtensionAPI, agentDir: string, state: Comm
         retryMessages: config.retryMessages !== false,
         showStatus: config.showStatus !== false,
         notifications: config.notifications !== false,
+        carryPartial: config.carryPartial ?? "off",
       };
       setupBusy = true;
       let result;
@@ -113,7 +115,8 @@ export function registerCommands(pi: ExtensionAPI, agentDir: string, state: Comm
       try {
         // Only non-default UI options are stored, keeping the file easy to read and edit.
         const document: Record<string, unknown> = { chain: result.chain };
-        for (const key of OPTION_KEYS) if (!result.options[key]) document[key] = false;
+        for (const key of ["retryMessages", "showStatus", "notifications"] as const) if (!result.options[key]) document[key] = false;
+        if (result.options.carryPartial !== "off") document.carryPartial = result.options.carryPartial;
         const { backedUp } = await saveConfiguration({ agentDir }, document);
         state.reload();
         state.clearStatus(ctx);

@@ -1,6 +1,6 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { ChainEntry } from "./config.ts";
-import { ChainEditor, OPTION_ROWS, type PickerOptions, type SetupResult } from "./picker-model.ts";
+import { ChainEditor, OPTION_ROWS, optionValue, type PickerOptions, type SetupResult } from "./picker-model.ts";
 import { ChainPicker, type ThemeLike } from "./picker-ui.ts";
 import { modelLabel } from "./refusal.ts";
 
@@ -97,9 +97,8 @@ async function pagedSetup(ctx: ExtensionCommandContext, editor: ChainEditor): Pr
         else if (move === "Move to bottom") editor.moveItem(index, editor.chain.length - 1);
       }
     } else if (action === "Settings") {
-      const rows = OPTION_ROWS.map((row) => `[${editor.options[row.key] ? "x" : " "}] ${row.label}`);
-      const index = await pick(ctx, "Toggle a setting", rows);
-      if (index !== undefined) editor.setOption(OPTION_ROWS[index].key, !editor.options[OPTION_ROWS[index].key]);
+      const index = await pick(ctx, "Change a setting (choices cycle)", OPTION_ROWS.map((row) => optionValue(editor.options, row)));
+      if (index !== undefined) editor.cycleOption(index);
     }
   }
 }

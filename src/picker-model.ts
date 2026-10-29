@@ -1,19 +1,30 @@
 import { fuzzyFilter } from "@earendil-works/pi-tui";
-import type { ChainEntry } from "./config.ts";
+import { CARRY_MODES, type CarryMode, type ChainEntry } from "./config.ts";
 import { modelKey, modelLabel } from "./refusal.ts";
 
 export interface PickerOptions {
   retryMessages: boolean;
   showStatus: boolean;
   notifications: boolean;
+  carryPartial: CarryMode;
 }
 export type Tab = "models" | "order" | "options" | "review";
 export const TABS: readonly Tab[] = ["models", "order", "options", "review"];
-export const OPTION_ROWS: readonly { key: keyof PickerOptions; label: string }[] = [
-  { key: "retryMessages", label: "Show retry notices in the transcript" },
-  { key: "showStatus", label: "Show fallback progress in the status area" },
-  { key: "notifications", label: "Show routine warnings (for example, chain exhausted)" },
+export type OptionRow =
+  | { kind: "toggle"; key: "retryMessages" | "showStatus" | "notifications"; label: string; hint: string }
+  | { kind: "choice"; key: "carryPartial"; label: string; hint: string };
+export const OPTION_ROWS: readonly OptionRow[] = [
+  { kind: "toggle", key: "retryMessages", label: "Show retry notices in the transcript",
+    hint: "A one-line notice after each retry. It is shown to you only and is never sent to a model." },
+  { kind: "toggle", key: "showStatus", label: "Show fallback progress in the status area",
+    hint: "Footer text while a fallback runs. A clean run clears it; unusual endings keep it until the next run." },
+  { kind: "toggle", key: "notifications", label: "Show routine warnings (for example, chain exhausted)",
+    hint: "Critical problems such as a failed model restore are always shown." },
+  { kind: "choice", key: "carryPartial", label: "Pass interrupted partial output to the next model",
+    hint: "off: the next model starts that response from scratch. cross-provider: pass the visible partial reasoning and answer only when the next model uses a different provider (the same provider would likely refuse again). always: pass it on every retry. Passed text is labelled as untrusted notes." },
 ];
+export const optionValue = (options: PickerOptions, row: OptionRow): string =>
+  row.kind === "toggle" ? `[${options[row.key] ? "x" : " "}] ${row.label}` : `${row.label}: ${options[row.key]}`;
 export interface OrderItem extends ChainEntry { available: boolean }
 export type SetupResult =
   | { kind: "save"; chain: ChainEntry[]; options: PickerOptions }
@@ -164,9 +175,15 @@ export class ChainEditor {
   }
 
   toggleOption(): void {
-    if (this.tab !== "options") return;
-    const row = OPTION_ROWS[this.cursors.options];
-    if (row) this.options[row.key] = !this.options[row.key];
+    if (this.tab === "options") this.cycleOption(this.cursors.options);
+  }
+
+  /** Toggle a switch, or step a choice through its values (wrapping). */
+  cycleOption(index: number): void {
+    const row = OPTION_ROWS[index];
+    if (!row) return;
+    if (row.kind === "toggle") this.options[row.key] = !this.options[row.key];
+    else this.options.carryPartial = CARRY_MODES[(CARRY_MODES.indexOf(this.options.carryPartial) + 1) % CARRY_MODES.length];
   }
 
   removeCurrent(): void {
@@ -205,8 +222,6 @@ export class ChainEditor {
     const [item] = this.chain.splice(from, 1);
     this.chain.splice(target, 0, item);
   }
-
-  setOption(key: keyof PickerOptions, value: boolean): void { this.options[key] = value; }
 
   result(): SetupResult {
     return { kind: "save", chain: this.chain.map(({ provider, id }) => ({ provider, id })), options: { ...this.options } };

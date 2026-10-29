@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
 
 const packageDir = process.env.PI_REFUSAL_TEST_PACKAGE_DIR ??
   fileURLToPath(new URL("../node_modules/@earendil-works/pi-coding-agent/", import.meta.url));
@@ -36,6 +37,15 @@ function wireReply(res, payload, kind, isOpenAI) {
   send({ type: "message_start", message: { id: "test-message", type: "message", role: "assistant",
     model: payload.model, content: [], stop_reason: null, stop_sequence: null,
     usage: { input_tokens: 1, output_tokens: 0 } } });
+  if (kind === "refusal-partial") {
+    send({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } });
+    send({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "WIRE-PARTIAL-REASONING step one." } });
+    send({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig" } });
+    send({ type: "content_block_stop", index: 0 });
+    send({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } });
+    send({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "WIRE-PARTIAL-ANSWER begins" } });
+    send({ type: "content_block_stop", index: 1 });
+  }
   if (kind === "success") {
     send({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
     send({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Test response completed." } });
@@ -52,7 +62,7 @@ export async function fixture(t, {
   responses = ["refusal", "success"], initial = PRIMARY, chain = [FIRST, SECOND],
   models = [PRIMARY, FIRST, SECOND], noAuth = [], priorBoundaryEntry = false,
   wire = false, fileConfig = false, invalidConfig = false, onRequest, ui = false, retryMessages,
-  priorContinuation = false, omitUserContext = false, setupKeys = [],
+  priorContinuation = false, omitUserContext = false, setupKeys = [], carryPartial, echoTool = false,
 } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "pi-refusal-fallback-test-"));
   const envKeys = ["PI_REFUSAL_FALLBACK_CHAIN", "PI_REFUSAL_FALLBACK_CONFIG", "PI_REFUSAL_FALLBACK_DEBUG"];
@@ -76,10 +86,11 @@ export async function fixture(t, {
   });
   process.env.PI_REFUSAL_FALLBACK_DEBUG = "0";
   process.env.PI_REFUSAL_FALLBACK_CONFIG = join(dir, "fallback.json");
+  if (carryPartial !== undefined) fileConfig = true; // options live in the JSON file, not in the environment chain
   if (fileConfig || invalidConfig) {
     delete process.env.PI_REFUSAL_FALLBACK_CHAIN;
     await writeFile(process.env.PI_REFUSAL_FALLBACK_CONFIG,
-      invalidConfig ? "not valid JSON" : JSON.stringify({ chain, ...(retryMessages === undefined ? {} : { retryMessages }) }));
+      invalidConfig ? "not valid JSON" : JSON.stringify({ chain, ...(retryMessages === undefined ? {} : { retryMessages }), ...(carryPartial === undefined ? {} : { carryPartial }) }));
   } else {
     process.env.PI_REFUSAL_FALLBACK_CHAIN = chain.map(key).join(",");
   }
@@ -183,7 +194,9 @@ export async function fixture(t, {
   assert.deepEqual(resourceLoader.getExtensions().errors, [], "extension must load without errors");
   const result = await createAgentSession({ cwd: dir, agentDir: dir, modelRuntime: runtime,
     model: runtime.getModel(initial.provider, initial.id), thinkingLevel: "high", resourceLoader, settingsManager,
-    sessionManager: SessionManager.inMemory(dir), tools: [] });
+    sessionManager: SessionManager.inMemory(dir), tools: echoTool ? ["echo_tool"] : [],
+    customTools: echoTool ? [{ name: "echo_tool", label: "Echo", description: "Returns a fixed string.", parameters: Type.Object({}),
+      execute: async () => ({ content: [{ type: "text", text: "echo ok" }], details: {} }) }] : [] });
   session = result.session;
   await session.bindExtensions({ mode: ui ? "rpc" : "print", onError: (error) => errors.push(error),
     ...(ui ? { uiContext: {

@@ -243,3 +243,37 @@ test("status shows readiness, file and the setup hint without opening a dialog",
   assert.equal(h.customCalls.length, 0);
   assert.equal(h.dialogs.length, 0);
 });
+
+test("setup stores a non-default handoff mode and removes the key again when set back to off", async (t) => {
+  const h = await harness(t, { custom: "host", preset: { chain: [first] },
+    keys: [[KEY.tab, KEY.tab, KEY.down, KEY.down, KEY.down, KEY.enter, KEY.enter, KEY.ctrlS], [KEY.tab, KEY.tab, KEY.down, KEY.down, KEY.down, KEY.enter, KEY.ctrlS]] });
+  await h.run("setup");
+  assert.deepEqual(JSON.parse(await readFile(h.path, "utf8")), { chain: [first], carryPartial: "always" });
+  assert.equal(h.state.getConfig().carryPartial, "always", "applied without a restart");
+  await h.run("setup");
+  assert.deepEqual(JSON.parse(await readFile(h.path, "utf8")), { chain: [first] }, "off is the default, so it is not written");
+});
+
+test("changing only the handoff mode counts as a change", async (t) => {
+  const h = await harness(t, { custom: "host", preset: { chain: [first] }, keys: [[KEY.tab, KEY.tab, KEY.down, KEY.down, KEY.down, KEY.enter, KEY.ctrlS]] });
+  await h.run("setup");
+  assert.equal(JSON.parse(await readFile(h.path, "utf8")).carryPartial, "cross-provider");
+  assert.ok(!h.messages.some((message) => message.message === "No changes to save."));
+});
+
+test("the page-by-page settings menu can change the handoff mode too", async (t) => {
+  const h = await harness(t, { custom: "unsupported", preset: { chain: [first] }, selections: [
+    "Settings", choose("Pass interrupted partial output"), "Settings", choose("Pass interrupted partial output"), "Save",
+  ] });
+  await h.run("setup");
+  assert.equal(JSON.parse(await readFile(h.path, "utf8")).carryPartial, "always");
+  assert.ok(h.dialogs.some((dialog) => dialog.options.some((option) => option.includes("partial output to the next model: cross-provider"))));
+});
+
+test("an existing handoff mode is the starting point and status names it", async (t) => {
+  const h = await harness(t, { custom: "host", preset: { chain: [first], carryPartial: "always" }, keys: [[KEY.ctrlS]] });
+  await h.run("status");
+  assert.match(h.messages.at(-1).message, /Partial output handoff: always/);
+  await h.run("setup");
+  assert.ok(h.messages.some((message) => message.message === "No changes to save."), "nothing changed, so nothing is rewritten");
+});

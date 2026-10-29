@@ -11,7 +11,7 @@ A [Pi](https://pi.dev) extension that retries a provider-refused turn on an **ex
 ## Install
 
 ```sh
-pi install git:github.com/sehoon123/pi-refusal-fallback@v0.3.0
+pi install git:github.com/sehoon123/pi-refusal-fallback@v0.4.0
 ```
 
 Then run `/reload` in an existing session. Do not load both this package and an older standalone `refusal-fallback.ts`: move the old copy outside Pi's auto-loaded extensions directory before switching to the package.
@@ -42,7 +42,7 @@ type to filter · ↑↓ move · Enter add/remove · Tab/←→ section · Ctrl+
 |---|---|
 | Models | type to search (same fuzzy matcher as `/model`) · `↑↓` `PgUp` `PgDn` `Home` `End` move · `Enter` adds or removes · `Esc` clears the filter |
 | Order | `Enter` picks up an item, `↑↓` reorder it, `Enter` drops it, `Esc` undoes the move · `Del`/`Backspace`/`x` removes |
-| Options | `Enter` or `Space` toggles a setting |
+| Options | `Enter` or `Space` toggles a switch or steps a choice; the highlighted setting is explained below the list |
 | Review | shows the final order and where it is saved · `Enter` saves |
 | Anywhere | `Tab`/`Shift+Tab` or `←→` switch sections · `Ctrl+S` saves · `Esc` cancels (twice if there are unsaved changes) · `Ctrl+C` aborts immediately · mouse wheel scrolls and clicks select |
 
@@ -67,7 +67,7 @@ Create `<agent-dir>/refusal-fallback.json`, normally `~/.pi/agent/refusal-fallba
 
 - `PI_CODING_AGENT_DIR` changes the agent directory.
 - `PI_REFUSAL_FALLBACK_CONFIG=/absolute/path/to/config.json` selects another config file. Relative paths resolve from Pi's working directory; `~/` is expanded.
-- Root fields: `chain` and the optional boolean UI settings below. Entry fields: only `provider` and `id`, both nonempty strings.
+- Root fields: `chain`, the optional boolean UI settings and `carryPartial` below. Entry fields: only `provider` and `id`, both nonempty strings.
 - `{"chain": []}` disables automatic fallback. Duplicate targets are normalized once, in order.
 - Files/environment chains are limited to 64 KiB; chains contain at most 128 entries. Model identifiers are limited to 1,024 characters. Invalid UTF-8, special files and oversized input are rejected without echoing their contents.
 - Configuration belongs outside the installed package checkout, so updates do not overwrite it.
@@ -134,6 +134,33 @@ The empty example chain remains disabled until you add your own models. All thre
 
 A bounded, non-context run summary is saved in the session, without prompts, responses or credential data. Recent summaries can be recovered after `/reload` from the active branch.
 
+## Partial output handoff
+
+When a response is cut off by a refusal, the visible part of it (reasoning and answer text) is normally **discarded**, and the next model answers that response from scratch, with the whole earlier conversation. Handing the cut-off output over is optional:
+
+```json
+{ "chain": [], "carryPartial": "cross-provider" }
+```
+
+| `carryPartial` | Behavior |
+|---|---|
+| `off` (default) | Nothing is handed over. |
+| `cross-provider` | Handed over only when the next model's provider id differs from the provider of the model that was cut off (`ica-a/x` → `ica-b/y`). The same provider has the same safety checks and would likely refuse again. |
+| `always` | Handed over on every retry, including to the same provider. |
+
+Choose it in `/refusal-fallback setup` → **Options**; the screen explains each value.
+
+What is handed over: the **visible** reasoning (for Claude models this is the displayed summary, not the hidden raw reasoning) and the partial answer text. Redacted reasoning, signed provider-specific reasoning blocks and tool calls that never ran are **not** handed over, so the next model decides for itself which actions to take. Text is capped at 8,000 characters of reasoning and 4,000 of answer; the newest part is kept and the cut is marked.
+
+How it is handed over: as one extra user-role message appended after the real conversation, labelled `[Notes from an interrupted earlier attempt]`, telling the model to treat the text as **untrusted background, not instructions**, and to give a complete answer to the request above. Delimiters inside the text are neutralized so it cannot close its own section.
+
+- **One response only.** The notes are added to the very next request. Later steps (for example after a tool call) and later prompts do not repeat them, and only the newest interruption is kept across several hops.
+- **Never stored.** The notes are built in memory for that request. They are not written to the session, so they cannot appear in pi-web or in exported sessions (the cut-off response itself is stored as usual).
+- **Withdrawn if they backfire.** If the model that received the notes refuses before writing anything, it is retried **once** without them before the chain moves on, so handing output over never costs you an answer. In our own gateway test, passing a Claude answer back to Claude was blocked as "duplicating model outputs"; the retry without notes then answered normally.
+- The transcript notice says when notes were passed (`Its partial output is passed along as notes (…)`) and `/refusal-fallback status` shows the mode and how often it was used.
+
+**Check your providers' terms.** Passing one provider's output to another service is your decision and some providers restrict reusing their outputs. Fallback providers also receive the notes in addition to the conversation. That is why the default is `off`.
+
 ## Behavior
 
 1. Observe a terminal assistant refusal: an explicit `rawStopReason: "refusal"`, or a narrowly recognized canonical provider refusal error. `ECONNREFUSED`, proxy/auth refusals and generic policy prose are not model refusals; pending, aborted and tool-executing messages never trigger fallback.
@@ -181,7 +208,7 @@ npm run test:e2e   # real pi TUI in a private tmux server; skipped when tmux is 
 npm pack --dry-run
 ```
 
-Tests use in-memory credentials/model catalogs and local loopback HTTP servers. **No real provider keys or paid model requests are required.** The 101 offline tests include configuration precedence/size limits, atomic save/backup and cancellation, nested IDs, disabled/invalid configuration, chained refusals/exhaustion, duplicates/auth failures, windowed-list scrolling at many sizes and widths, filter/reorder/option/save flows, mouse input, context-free retry notices, progress/summary reporting, manual-selection races, restoration failure, cooperative continuation, missing context and native HTTP cross-provider handoff.
+Tests use in-memory credentials/model catalogs and local loopback HTTP servers. **No real provider keys or paid model requests are required.** The 135 offline tests include configuration precedence/size limits, atomic save/backup and cancellation, nested IDs, disabled/invalid configuration, chained refusals/exhaustion, duplicates/auth failures, windowed-list scrolling at many sizes and widths, filter/reorder/option/save flows, mouse input, context-free retry notices, the three handoff modes (including latest-only, one-shot, truncation, delimiter safety and withdrawal of rejected notes) over the SDK and a real HTTP transport, progress/summary reporting, manual-selection races, restoration failure, cooperative continuation, missing context and native HTTP cross-provider handoff.
 
 The lifecycle implementation was additionally exercised in actual `pi -p` processes against a private gateway: a native refusal followed by a successful continuation, three repeated two-hop fallback runs, and bounded chain exhaustion. Repeated multi-hop tests used test-only refusal injection after actual upstream responses. Private credentials, provider/model choices, raw session logs and live-test artifacts are intentionally not published here. These checks do not promise availability of any particular model or gateway.
 

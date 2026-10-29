@@ -6,12 +6,16 @@ import { dirname, join, resolve } from "node:path";
 import { modelKey } from "./refusal.ts";
 
 export interface ChainEntry { provider: string; id: string }
+/** What to hand the next model when a response was cut off by a refusal. */
+export const CARRY_MODES = ["off", "cross-provider", "always"] as const;
+export type CarryMode = (typeof CARRY_MODES)[number];
 export interface Configuration {
   chain: ChainEntry[];
   source: "environment" | "file" | "none";
   retryMessages?: boolean;
   showStatus?: boolean;
   notifications?: boolean;
+  carryPartial?: CarryMode;
 }
 export interface ConfigOptions { agentDir: string; env?: NodeJS.ProcessEnv; cwd?: string }
 export const MAX_CONFIG_BYTES = 65_536;
@@ -48,10 +52,16 @@ function document(value: unknown): Omit<Configuration, "source"> {
     throw new Error("The configuration must be an object with a chain array.");
   }
   const item = value as Record<string, unknown>;
-  if (Object.keys(item).some((key) => key !== "chain" && !optionNames.includes(key as typeof optionNames[number]))) {
-    throw new Error("Unknown configuration field; use chain, retryMessages, showStatus and notifications only.");
+  if (Object.keys(item).some((key) => key !== "chain" && key !== "carryPartial" && !optionNames.includes(key as typeof optionNames[number]))) {
+    throw new Error("Unknown configuration field; use chain, retryMessages, showStatus, notifications and carryPartial only.");
   }
   const result: Omit<Configuration, "source"> = { chain: parseChain(item.chain) };
+  if (item.carryPartial !== undefined) {
+    if (typeof item.carryPartial !== "string" || !(CARRY_MODES as readonly string[]).includes(item.carryPartial)) {
+      throw new Error("The carryPartial option must be off, cross-provider or always.");
+    }
+    result.carryPartial = item.carryPartial as CarryMode;
+  }
   for (const key of optionNames) {
     if (item[key] !== undefined) {
       if (typeof item[key] !== "boolean") throw new Error(`The ${key} option must be a boolean.`);
