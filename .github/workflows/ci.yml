@@ -1,0 +1,24 @@
+name: CI
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pi-version: ["1.2.0", "1.4.0"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Select tested Pi host
+        if: matrix.pi-version != '1.4.0'
+        run: npm install --no-save --package-lock=false --ignore-scripts @earendil-works/pi-coding-agent@${{ matrix.pi-version }} @earendil-works/pi-agent-core@${{ matrix.pi-version }} @earendil-works/pi-ai@${{ matrix.pi-version }}
+      - run: npm run check
+      - run: npm test
+      - run: npm pack --dry-run

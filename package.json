@@ -1,0 +1,33 @@
+{
+  "name": "pi-refusal-fallback",
+  "version": "0.1.0",
+  "description": "Bounded provider-refusal recovery for Pi with user-selected fallback models",
+  "type": "module",
+  "license": "MIT",
+  "author": "SH Jung (sehoon123)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sehoon123/pi-refusal-fallback.git"
+  },
+  "homepage": "https://github.com/sehoon123/pi-refusal-fallback#readme",
+  "bugs": { "url": "https://github.com/sehoon123/pi-refusal-fallback/issues" },
+  "keywords": ["pi-package", "pi-extension", "fallback", "model-routing"],
+  "engines": { "node": ">=22.19.0" },
+  "files": ["src", "examples", "README.md", "README.ko.md", "LICENSE"],
+  "pi": { "extensions": ["./src/index.ts"] },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-agent-core": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-agent-core": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@types/node": "^22.20.5",
+    "typescript": "5.9.3"
+  }
+}

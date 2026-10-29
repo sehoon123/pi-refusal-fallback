@@ -1,0 +1,6 @@
+{
+  "chain": [
+    { "provider": "your-first-provider", "id": "your-first-fallback-model" },
+    { "provider": "your-second-provider", "id": "your-second-fallback-model" }
+  ]
+}

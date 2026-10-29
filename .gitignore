@@ -1,0 +1,13 @@
+node_modules/
+coverage/
+dist/
+*.tgz
+*.log
+.env
+.env.*
+!.env.example
+refusal-fallback.json
+auth.json
+models.json
+artifacts/
+sessions/
