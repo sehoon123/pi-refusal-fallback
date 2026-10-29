@@ -21,7 +21,7 @@ export const OPTION_ROWS: readonly OptionRow[] = [
   { kind: "toggle", key: "notifications", label: "Show routine warnings (for example, chain exhausted)",
     hint: "Critical problems such as a failed model restore are always shown." },
   { kind: "choice", key: "carryPartial", label: "Pass interrupted partial output to the next model",
-    hint: "off: the next model starts that response from scratch. cross-provider: pass the visible partial reasoning and answer only when the next model uses a different provider (the same provider would likely refuse again). always: pass it on every retry. Passed text is labelled as untrusted notes." },
+    hint: "off: the next model starts that response from scratch. cross-provider: pass the visible partial reasoning and answer only when the next model uses a different provider. Same-provider handoff is not offered: a provider can block its own output being sent back to it. Passed text is labelled as untrusted notes." },
 ];
 export const optionValue = (options: PickerOptions, row: OptionRow): string =>
   row.kind === "toggle" ? `[${options[row.key] ? "x" : " "}] ${row.label}` : `${row.label}: ${options[row.key]}`;

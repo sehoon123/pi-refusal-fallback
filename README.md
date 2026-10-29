@@ -11,7 +11,7 @@ A [Pi](https://pi.dev) extension that retries a provider-refused turn on an **ex
 ## Install
 
 ```sh
-pi install git:github.com/sehoon123/pi-refusal-fallback@v0.4.0
+pi install git:github.com/sehoon123/pi-refusal-fallback@v0.5.0
 ```
 
 Then run `/reload` in an existing session. Do not load both this package and an older standalone `refusal-fallback.ts`: move the old copy outside Pi's auto-loaded extensions directory before switching to the package.
@@ -145,8 +145,9 @@ When a response is cut off by a refusal, the visible part of it (reasoning and a
 | `carryPartial` | Behavior |
 |---|---|
 | `off` (default) | Nothing is handed over. |
-| `cross-provider` | Handed over only when the next model's provider id differs from the provider of the model that was cut off (`ica-a/x` → `ica-b/y`). The same provider has the same safety checks and would likely refuse again. |
-| `always` | Handed over on every retry, including to the same provider. |
+| `cross-provider` | Handed over only when the next model's provider id differs from the provider of the model that was cut off (`ica-a/x` → `ica-b/y`). |
+
+Output is **never handed to the same provider.** In our gateway test, sending a Claude answer back to Claude was blocked as "duplicating model outputs" (2 of 2 attempts, before any output), while the same prompt without the notes was answered 14 of 14 times. The same provider also applies the same safety checks to the same content. An `always` value from version 0.4.0 is read as `cross-provider` with a warning (fallback keeps working); saving setup once rewrites the file.
 
 Choose it in `/refusal-fallback setup` → **Options**; the screen explains each value.
 
@@ -156,7 +157,7 @@ How it is handed over: as one extra user-role message appended after the real co
 
 - **One response only.** The notes are added to the very next request. Later steps (for example after a tool call) and later prompts do not repeat them, and only the newest interruption is kept across several hops.
 - **Never stored.** The notes are built in memory for that request. They are not written to the session, so they cannot appear in pi-web or in exported sessions (the cut-off response itself is stored as usual).
-- **Withdrawn if they backfire.** If the model that received the notes refuses before writing anything, it is retried **once** without them before the chain moves on, so handing output over never costs you an answer. In our own gateway test, passing a Claude answer back to Claude was blocked as "duplicating model outputs"; the retry without notes then answered normally.
+- **Withdrawn if they backfire.** If the model that received the notes refuses before writing anything, it is retried **once** without them before the chain moves on, so handing output over never costs you an answer.
 - The transcript notice says when notes were passed (`Its partial output is passed along as notes (…)`) and `/refusal-fallback status` shows the mode and how often it was used.
 
 **Check your providers' terms.** Passing one provider's output to another service is your decision and some providers restrict reusing their outputs. Fallback providers also receive the notes in addition to the conversation. That is why the default is `off`.
@@ -208,7 +209,7 @@ npm run test:e2e   # real pi TUI in a private tmux server; skipped when tmux is 
 npm pack --dry-run
 ```
 
-Tests use in-memory credentials/model catalogs and local loopback HTTP servers. **No real provider keys or paid model requests are required.** The 135 offline tests include configuration precedence/size limits, atomic save/backup and cancellation, nested IDs, disabled/invalid configuration, chained refusals/exhaustion, duplicates/auth failures, windowed-list scrolling at many sizes and widths, filter/reorder/option/save flows, mouse input, context-free retry notices, the three handoff modes (including latest-only, one-shot, truncation, delimiter safety and withdrawal of rejected notes) over the SDK and a real HTTP transport, progress/summary reporting, manual-selection races, restoration failure, cooperative continuation, missing context and native HTTP cross-provider handoff.
+Tests use in-memory credentials/model catalogs and local loopback HTTP servers. **No real provider keys or paid model requests are required.** The 138 offline tests include configuration precedence/size limits, atomic save/backup and cancellation, nested IDs, disabled/invalid configuration, chained refusals/exhaustion, duplicates/auth failures, windowed-list scrolling at many sizes and widths, filter/reorder/option/save flows, mouse input, context-free retry notices, both handoff modes (including latest-only, one-shot, truncation, delimiter safety and withdrawal of rejected notes) over the SDK and a real HTTP transport, progress/summary reporting, manual-selection races, restoration failure, cooperative continuation, missing context and native HTTP cross-provider handoff.
 
 The lifecycle implementation was additionally exercised in actual `pi -p` processes against a private gateway: a native refusal followed by a successful continuation, three repeated two-hop fallback runs, and bounded chain exhaustion. Repeated multi-hop tests used test-only refusal injection after actual upstream responses. Private credentials, provider/model choices, raw session logs and live-test artifacts are intentionally not published here. These checks do not promise availability of any particular model or gateway.
 

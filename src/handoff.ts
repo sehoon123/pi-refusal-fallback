@@ -45,7 +45,7 @@ export function collectPartial(message: AgentMessage): PartialOutput | undefined
 }
 
 export function shouldCarry(mode: CarryMode | undefined, refusedProvider: string, targetProvider: string): boolean {
-  return mode === "always" || (mode === "cross-provider" && refusedProvider !== targetProvider);
+  return mode === "cross-provider" && refusedProvider !== targetProvider;
 }
 
 export const HANDOFF_MARKER = "[Notes from an interrupted earlier attempt]";

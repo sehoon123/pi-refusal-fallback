@@ -246,10 +246,10 @@ test("status shows readiness, file and the setup hint without opening a dialog",
 
 test("setup stores a non-default handoff mode and removes the key again when set back to off", async (t) => {
   const h = await harness(t, { custom: "host", preset: { chain: [first] },
-    keys: [[KEY.tab, KEY.tab, KEY.down, KEY.down, KEY.down, KEY.enter, KEY.enter, KEY.ctrlS], [KEY.tab, KEY.tab, KEY.down, KEY.down, KEY.down, KEY.enter, KEY.ctrlS]] });
+    keys: [[KEY.tab, KEY.tab, KEY.down, KEY.down, KEY.down, KEY.enter, KEY.ctrlS], [KEY.tab, KEY.tab, KEY.down, KEY.down, KEY.down, KEY.enter, KEY.ctrlS]] });
   await h.run("setup");
-  assert.deepEqual(JSON.parse(await readFile(h.path, "utf8")), { chain: [first], carryPartial: "always" });
-  assert.equal(h.state.getConfig().carryPartial, "always", "applied without a restart");
+  assert.deepEqual(JSON.parse(await readFile(h.path, "utf8")), { chain: [first], carryPartial: "cross-provider" });
+  assert.equal(h.state.getConfig().carryPartial, "cross-provider", "applied without a restart");
   await h.run("setup");
   assert.deepEqual(JSON.parse(await readFile(h.path, "utf8")), { chain: [first] }, "off is the default, so it is not written");
 });
@@ -263,17 +263,26 @@ test("changing only the handoff mode counts as a change", async (t) => {
 
 test("the page-by-page settings menu can change the handoff mode too", async (t) => {
   const h = await harness(t, { custom: "unsupported", preset: { chain: [first] }, selections: [
-    "Settings", choose("Pass interrupted partial output"), "Settings", choose("Pass interrupted partial output"), "Save",
+    "Settings", choose("Pass interrupted partial output"), "Settings", "↩ Back", "Save",
   ] });
   await h.run("setup");
-  assert.equal(JSON.parse(await readFile(h.path, "utf8")).carryPartial, "always");
+  assert.equal(JSON.parse(await readFile(h.path, "utf8")).carryPartial, "cross-provider");
   assert.ok(h.dialogs.some((dialog) => dialog.options.some((option) => option.includes("partial output to the next model: cross-provider"))));
 });
 
 test("an existing handoff mode is the starting point and status names it", async (t) => {
-  const h = await harness(t, { custom: "host", preset: { chain: [first], carryPartial: "always" }, keys: [[KEY.ctrlS]] });
+  const h = await harness(t, { custom: "host", preset: { chain: [first], carryPartial: "cross-provider" }, keys: [[KEY.ctrlS]] });
   await h.run("status");
-  assert.match(h.messages.at(-1).message, /Partial output handoff: always/);
+  assert.match(h.messages.at(-1).message, /Partial output handoff: cross-provider/);
   await h.run("setup");
   assert.ok(h.messages.some((message) => message.message === "No changes to save."), "nothing changed, so nothing is rewritten");
+});
+
+test("a removed \"always\" value is reported in status and rewritten by the next save", async (t) => {
+  const h = await harness(t, { custom: "host", preset: { chain: [first], carryPartial: "always" }, keys: [[KEY.ctrlS]] });
+  await h.run("status");
+  assert.match(h.messages.at(-1).message, /Partial output handoff: cross-provider\nWarning: carryPartial "always" is no longer supported/);
+  await h.run("setup");
+  assert.deepEqual(JSON.parse(await readFile(h.path, "utf8")), { chain: [first], carryPartial: "cross-provider" });
+  assert.equal(h.state.getConfig().warnings, undefined, "the warning is gone after one save");
 });

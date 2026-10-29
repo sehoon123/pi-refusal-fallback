@@ -6,9 +6,12 @@ import { dirname, join, resolve } from "node:path";
 import { modelKey } from "./refusal.ts";
 
 export interface ChainEntry { provider: string; id: string }
-/** What to hand the next model when a response was cut off by a refusal. */
-export const CARRY_MODES = ["off", "cross-provider", "always"] as const;
+/** What to hand the next model when a response was cut off by a refusal. Same-provider handoff is not offered. */
+export const CARRY_MODES = ["off", "cross-provider"] as const;
 export type CarryMode = (typeof CARRY_MODES)[number];
+export const LEGACY_ALWAYS_WARNING = 'carryPartial "always" is no longer supported and is treated as "cross-provider": ' +
+  "sending a model's output back to the same provider was blocked as duplicating model outputs. " +
+  "Save /refusal-fallback setup once, or edit the file, to remove this warning.";
 export interface Configuration {
   chain: ChainEntry[];
   source: "environment" | "file" | "none";
@@ -16,6 +19,8 @@ export interface Configuration {
   showStatus?: boolean;
   notifications?: boolean;
   carryPartial?: CarryMode;
+  /** Non-fatal problems with an otherwise usable configuration, shown at start-up and in status. */
+  warnings?: string[];
 }
 export interface ConfigOptions { agentDir: string; env?: NodeJS.ProcessEnv; cwd?: string }
 export const MAX_CONFIG_BYTES = 65_536;
@@ -56,9 +61,13 @@ function document(value: unknown): Omit<Configuration, "source"> {
     throw new Error("Unknown configuration field; use chain, retryMessages, showStatus, notifications and carryPartial only.");
   }
   const result: Omit<Configuration, "source"> = { chain: parseChain(item.chain) };
-  if (item.carryPartial !== undefined) {
+  if (item.carryPartial === "always") {
+    // Removed in 0.5.0. Use the closest supported value rather than disabling fallback altogether.
+    result.carryPartial = "cross-provider";
+    result.warnings = [LEGACY_ALWAYS_WARNING];
+  } else if (item.carryPartial !== undefined) {
     if (typeof item.carryPartial !== "string" || !(CARRY_MODES as readonly string[]).includes(item.carryPartial)) {
-      throw new Error("The carryPartial option must be off, cross-provider or always.");
+      throw new Error("The carryPartial option must be off or cross-provider.");
     }
     result.carryPartial = item.carryPartial as CarryMode;
   }
@@ -131,7 +140,7 @@ export async function saveConfiguration(options: ConfigOptions, value: unknown):
   if ((options.env ?? process.env).PI_REFUSAL_FALLBACK_CHAIN !== undefined) {
     throw new Error("The environment chain overrides files. Unset it before using setup.");
   }
-  const parsed = document(value);
+  const { warnings: _warnings, ...parsed } = document(value);
   const serialized = `${JSON.stringify(parsed, null, 2)}\n`;
   if (Buffer.byteLength(serialized) > MAX_CONFIG_BYTES) throw new Error("Configuration must be no larger than 64 KiB.");
   const path = configurationPath(options);

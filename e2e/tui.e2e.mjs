@@ -72,7 +72,7 @@ try {
   await waitFor(/Order \(2\)/, "setup reopened with the saved order");
   keys("Tab", "Tab", "Down", "Down", "Down");
   const options = await waitFor(/Pass interrupted partial output to the next model: off/, "the handoff row");
-  assert.match(options.replace(/\s+/g, " "), /the same provider would likely refuse again/, "the highlighted setting is explained");
+  assert.match(options.replace(/\s+/g, " "), /only when the next model uses a different provider/, "the highlighted setting is explained");
   keys("Enter");
   await waitFor(/next model: cross-provider/, "the handoff mode after one Enter");
   keys("C-s");

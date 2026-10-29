@@ -49,6 +49,7 @@ export function registerCommands(pi: ExtensionAPI, agentDir: string, state: Comm
         const text = [`[refusal-fallback] ${headline}`, ...lines,
           `Retry notices: ${config.retryMessages === false ? "hidden" : "shown"} · status: ${config.showStatus === false ? "off" : "on"} · warnings: ${config.notifications === false ? "off" : "on"}`,
           `Partial output handoff: ${config.carryPartial ?? "off"}`,
+          ...(config.warnings ?? []).map((warning) => `Warning: ${warning}`),
           ...(state.getLastSummary() ? [state.getLastSummary()!] : []),
           `File: ${file()}`,
           "Use /refusal-fallback setup to change the order."].join("\n");
@@ -70,8 +71,9 @@ export function registerCommands(pi: ExtensionAPI, agentDir: string, state: Comm
       if (action === "reload") {
         state.reload();
         state.clearStatus(ctx);
+        const reloadWarnings = (state.getConfig().warnings ?? []).map((warning) => `\nWarning: ${warning}`).join("");
         ctx.ui.notify(state.getError() ? `[refusal-fallback] Disabled: ${state.getError()}` :
-          `[refusal-fallback] Reloaded ${state.getConfig().chain.length} fallback model(s).`, state.getError() ? "error" : "info");
+          `[refusal-fallback] Reloaded ${state.getConfig().chain.length} fallback model(s).${reloadWarnings}`, state.getError() ? "error" : reloadWarnings ? "warning" : "info");
         return;
       }
       if (!ctx.hasUI) {
@@ -108,7 +110,8 @@ export function registerCommands(pi: ExtensionAPI, agentDir: string, state: Comm
         ctx.ui.notify("A run started during setup. No configuration was written; retry when idle.", "warning");
         return;
       }
-      if (sameChain(result.chain, config.chain) && OPTION_KEYS.every((key) => result.options[key] === current[key])) {
+      // A file with a removed value is rewritten even without edits, so its warning goes away.
+      if (sameChain(result.chain, config.chain) && OPTION_KEYS.every((key) => result.options[key] === current[key]) && !config.warnings?.length) {
         ctx.ui.notify("No changes to save.", "info");
         return;
       }

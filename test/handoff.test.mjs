@@ -39,8 +39,8 @@ test("long output keeps the newest text, marks the cut and never splits a charac
   assert.ok(!short.answer.includes("omitted"), "exactly at the cap is not truncated");
 });
 
-test("the three modes decide by provider", () => {
-  for (const [mode, same, different] of [["off", false, false], ["cross-provider", false, true], ["always", true, true], [undefined, false, false]]) {
+test("the two modes decide by provider; nothing is ever handed to the same provider", () => {
+  for (const [mode, same, different] of [["off", false, false], ["cross-provider", false, true], [undefined, false, false]]) {
     assert.equal(shouldCarry(mode, "a", "a"), same, `${mode} same provider`);
     assert.equal(shouldCarry(mode, "a", "b"), different, `${mode} different provider`);
   }

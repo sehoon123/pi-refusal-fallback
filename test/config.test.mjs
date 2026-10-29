@@ -145,9 +145,9 @@ test("failed backup replacement leaves the original intact and cleans temporary 
   assert.ok(!(await readdir(agentDir)).some((name) => name.endsWith(".tmp")));
 });
 
-test("carryPartial accepts exactly the three modes and defaults to nothing", async (t) => {
+test("carryPartial accepts off and cross-provider and defaults to nothing", async (t) => {
   const agentDir = await directory(t);
-  for (const mode of ["off", "cross-provider", "always"]) {
+  for (const mode of ["off", "cross-provider"]) {
     await writeFile(join(agentDir, "refusal-fallback.json"), JSON.stringify({ chain, carryPartial: mode }));
     assert.equal(readConfiguration({ agentDir, env: {} }).carryPartial, mode);
   }
@@ -155,8 +155,21 @@ test("carryPartial accepts exactly the three modes and defaults to nothing", asy
   assert.equal(readConfiguration({ agentDir, env: {} }).carryPartial, undefined);
   for (const bad of ["ALWAYS", "cross_provider", "yes", true, 1, null, ["always"], {}, ""]) {
     await writeFile(join(agentDir, "refusal-fallback.json"), JSON.stringify({ chain, carryPartial: bad }));
-    assert.throws(() => readConfiguration({ agentDir, env: {} }), /carryPartial option must be off, cross-provider or always/, JSON.stringify(bad));
+    assert.throws(() => readConfiguration({ agentDir, env: {} }), /carryPartial option must be off or cross-provider/, JSON.stringify(bad));
   }
+});
+
+test("the removed \"always\" value is read as cross-provider with a warning, never as an error", async (t) => {
+  const agentDir = await directory(t);
+  await writeFile(join(agentDir, "refusal-fallback.json"), JSON.stringify({ chain, carryPartial: "always" }));
+  const config = readConfiguration({ agentDir, env: {} });
+  assert.equal(config.carryPartial, "cross-provider");
+  assert.equal(config.warnings.length, 1);
+  assert.match(config.warnings[0], /"always" is no longer supported/);
+  await saveConfiguration({ agentDir, env: {} }, { chain, carryPartial: "always" });
+  assert.deepEqual(JSON.parse(await readFile(join(agentDir, "refusal-fallback.json"), "utf8")), { chain, carryPartial: "cross-provider" },
+    "a warnings field is never written");
+  assert.equal(readConfiguration({ agentDir, env: {} }).warnings, undefined);
 });
 
 test("carryPartial survives a setup save round trip", async (t) => {

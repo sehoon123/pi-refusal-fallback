@@ -136,6 +136,7 @@ export default function refusalFallback(pi: ExtensionAPI): void {
           !/[\u0000-\u0009\u000b-\u001f\u007f]/.test(data.summary)) lastSummary = data.summary;
     }
     if (configError) notify(ctx, `Disabled: ${configError}`, true);
+    for (const warning of config.warnings ?? []) notify(ctx, warning);
   });
   pi.on("before_agent_start", (_event, ctx) => {
     status(ctx, undefined);

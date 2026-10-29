@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0
+
+### Removed
+
+- **`carryPartial: "always"`.** Partial output is now handed over only to a model on a different provider (`cross-provider`) or not at all (`off`, the default). In a gateway test, a Claude answer sent back to Claude was blocked as "duplicating model outputs" (2 of 2, before any output; the same prompt without the notes was answered 14 of 14 times), so the same-provider handoff could only cost an extra request.
+- Existing files with `"always"` keep working: the value is read as `cross-provider`, a warning is shown at start-up, after `reload` and in `status`, and the next setup save rewrites the file (even without other changes).
+
+### Changed
+
+- The Options screen offers `off` and `cross-provider` and explains why same-provider handoff is not offered.
+- 138 offline tests on Pi 1.2.0 and 1.4.0.
+
 ## 0.4.0
 
 ### Added

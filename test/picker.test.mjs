@@ -331,17 +331,18 @@ test("clicking a tab title switches sections", () => {
   assert.equal(p.component.handleMouse(mouse({ type: "move", button: "none" })), undefined);
 });
 
-test("the handoff setting cycles off -> cross-provider -> always -> off and explains itself", () => {
+test("the handoff setting switches between off and cross-provider and explains itself", () => {
   const p = picker();
   p.send(KEY.tab, KEY.tab, KEY.down, KEY.down, KEY.down);
   assert.match(p.text(), /→ Pass interrupted partial output to the next model: off/);
-  assert.match(p.text().replace(/\s+/g, " "), /same provider would likely refuse again/, "the highlighted setting is explained");
+  const explained = p.text().replace(/\s+/g, " ");
+  assert.match(explained, /only when the next model uses a different provider/, "the highlighted setting is explained");
+  assert.match(explained, /Same-provider handoff is not offered/);
+  assert.ok(!/\balways\b/.test(explained), "the removed mode is not offered");
   p.send(KEY.enter);
   assert.equal(p.editor.options.carryPartial, "cross-provider");
   p.send(" ");
-  assert.equal(p.editor.options.carryPartial, "always");
-  p.send(KEY.enter);
-  assert.equal(p.editor.options.carryPartial, "off");
+  assert.equal(p.editor.options.carryPartial, "off", "two values: the next press switches back");
   assert.equal(p.editor.dirty, false, "returning to the original value is not a change");
   p.send(KEY.enter, KEY.tab);
   assert.match(p.text(), /Settings: notices on · status on · warnings on · partial output: cross-provider/);
