@@ -11,7 +11,7 @@ A [Pi](https://pi.dev) extension that retries a provider-refused turn on an **ex
 ## Install
 
 ```sh
-pi install git:github.com/sehoon123/pi-refusal-fallback@v0.1.0
+pi install git:github.com/sehoon123/pi-refusal-fallback@v0.2.0
 ```
 
 Then run `/reload` in an existing session. Do not load both this package and an older standalone `refusal-fallback.ts`: move the old copy outside Pi's auto-loaded extensions directory before switching to the package.
@@ -39,10 +39,11 @@ Create `<agent-dir>/refusal-fallback.json`, normally `~/.pi/agent/refusal-fallba
 
 - `PI_CODING_AGENT_DIR` changes the agent directory.
 - `PI_REFUSAL_FALLBACK_CONFIG=/absolute/path/to/config.json` selects another config file. Relative paths resolve from Pi's working directory; `~/` is expanded.
-- Root fields: only `chain`. Entry fields: only `provider` and `id`, both nonempty strings.
-- `{"chain": []}` disables automatic fallback.
+- Root fields: `chain` and the optional boolean UI settings below. Entry fields: only `provider` and `id`, both nonempty strings.
+- `{"chain": []}` disables automatic fallback. Duplicate targets are normalized once, in order.
+- Files/environment chains are limited to 64 KiB; chains contain at most 128 entries. Model identifiers are limited to 1,024 characters. Invalid UTF-8, special files and oversized input are rejected without echoing their contents.
 - Configuration belongs outside the installed package checkout, so updates do not overwrite it.
-- Run `/reload` after editing the file.
+- Use `/refusal-fallback reload` while idle to apply file changes without reloading all extensions. Pi's `/reload` also works.
 
 An example is also available at [`examples/refusal-fallback.example.json`](examples/refusal-fallback.example.json).
 
@@ -72,21 +73,44 @@ Environment values must be present in the process that launches Pi. Exporting a 
 
 A missing default file is normal. An explicitly selected missing file or malformed configuration disables fallback and reports a configuration error; it does not prevent ordinary Pi requests.
 
-Check the active configuration in an interactive session:
+Commands available in TUI and dialog-capable RPC clients:
 
 ```text
 /refusal-fallback status
+/refusal-fallback reload
+/refusal-fallback setup
 ```
 
-This command sends no model request and does not change settings.
+- **status**: show the effective chain, missing models/authentication, quiet/visible mode, and the most recent run outcome, skip reasons, duration and restoration result. No model requests or file writes.
+- **reload**: re-read configuration while idle; active runs keep their original snapshot. Invalid new configuration safely disables future fallback.
+- **setup**: pick authenticated models in order, undo a choice, save or cancel. Saving requires confirmation, writes atomically with mode `0600`, keeps an existing file as `.bak`, and applies the result for future runs. Cancellation writes nothing. Concurrent setup dialogs in one runtime are blocked; separate processes use atomic last-writer-wins saves. Setup will not replace symlinks/special files or write a file ignored by an environment-chain override.
+
+### Progress and quiet mode
+
+```json
+{
+  "chain": [],
+  "retryMessages": false,
+  "showStatus": true,
+  "notifications": true
+}
+```
+
+The empty example chain remains disabled until you add your own models. All three UI options default to `true` when omitted:
+
+- `retryMessages: false` avoids adding retry notices to the transcript **and model context**, saving repeated prompt tokens. Context edits and actual continuation still work. Progress and status remain available.
+- `showStatus`: compact footer/RPC status such as `fallback 2/3: requesting model-id`, followed by the final outcome. Unchanged statuses are not re-emitted; clients may choose how to display them.
+- `notifications`: routine warnings such as chain exhaustion. Critical configuration/restoration failures are always reported.
+
+A bounded, non-context run summary is saved in the session, without prompts, responses or credential data. Recent summaries can be recovered after `/reload` from the active branch.
 
 ## Behavior
 
-1. Observe a finalized assistant refusal: `rawStopReason: "refusal"`, or an error with refusal/policy-related text.
-2. At `agent_before_settle`, select the next explicitly configured usable model.
-3. Append a `context_edit` omitting the failed assistant message from future model context, and a visible retry notice. Raw history and usage remain preserved.
+1. Observe a terminal assistant refusal: an explicit `rawStopReason: "refusal"`, or a narrowly recognized canonical provider refusal error. `ECONNREFUSED`, proxy/auth refusals and generic policy prose are not model refusals; pending, aborted and tool-executing messages never trigger fallback.
+2. At `agent_before_settle`, select the next explicitly configured usable model, unless another extension already requested a continuation or the user changed models.
+3. Append a `context_edit` omitting the failed assistant message from future model context, and, unless quiet mode is enabled, a visible numbered retry notice. Raw history and usage remain preserved. Missing runnable user/tool context stops recovery rather than fabricating input.
 4. Request one real continuation. If that model also refuses, advance to the next configured entry.
-5. At final settlement, restore the original selected model and thinking level without changing global defaults.
+5. At final settlement, restore the original selected model and thinking level without changing global defaults. A user's newer model/thinking choice is respected, including selection changes during awaited switches. A failed restoration is reported explicitly instead of silently leaving an unexpected model selected.
 
 The pre-settlement boundary matters: Pi's low-level error path calls `turn_end` but can ignore its continuation result. An extension that switches models and returns `continue: true` only from `turn_end` can display a retry notice without issuing the next request.
 
@@ -98,7 +122,12 @@ The pre-settlement boundary matters: Pi's low-level error path calls `turn_end` 
 - An abort does not trigger another request. Aborting a later fallback still restores the original model.
 - A new user run starts with a fresh chain budget.
 - Ordinary successes, unrelated provider failures, quota errors and network errors do not trigger this extension unless classified as a refusal. Pi's normal retry policy remains separate.
-- Other extensions' earlier boundary proposals are preserved. Other provider/routing extensions can still affect backend availability and accepted thinking options.
+- Other extensions' earlier boundary proposals and already-requested continuations are respected. Other provider/routing extensions can still affect backend availability and accepted thinking options.
+- Manual model changes stop this run's automatic fallback. In-flight ownership recovery is bounded; if model selection keeps racing another actor, the extension stops and asks the user to verify the selection rather than looping.
+
+### Performance
+
+Configuration is read only at startup or explicit reload/setup, not for each turn or token. Ordered deduplication and collision-free model keys prevent repeated catalog lookups and retries. Legacy error-text classification scans at most 4,096 characters. The extension has no timers, background polling, model calls of its own, or per-token stream handlers. Footer updates occur only at lifecycle boundaries and are deduplicated. Quiet mode removes retry-notice prompt growth; run metadata is non-context and bounded.
 
 ## Data, billing, and diagnostics
 
@@ -121,7 +150,7 @@ npm test
 npm pack --dry-run
 ```
 
-Tests use in-memory credentials/model catalogs and local loopback HTTP servers. **No real provider keys or paid model requests are required.** Coverage includes configuration precedence, nested IDs, disabled/invalid configuration, chained refusals, exhaustion, duplicate models, unavailable authentication, cancellation, state reset, context-history preservation and native HTTP cross-provider handoff.
+Tests use in-memory credentials/model catalogs and local loopback HTTP servers. **No real provider keys or paid model requests are required.** The 62 tests include configuration precedence/size limits, atomic save/backup and cancellation, nested IDs, disabled/invalid configuration, chained refusals/exhaustion, duplicates/auth failures, quiet mode, progress/summary reporting, manual-selection races, restoration failure, cooperative continuation, missing context and native HTTP cross-provider handoff.
 
 The lifecycle implementation was additionally exercised in actual `pi -p` processes against a private gateway: a native refusal followed by a successful continuation, three repeated two-hop fallback runs, and bounded chain exhaustion. Repeated multi-hop tests used test-only refusal injection after actual upstream responses. Private credentials, provider/model choices, raw session logs and live-test artifacts are intentionally not published here. These checks do not promise availability of any particular model or gateway.
 

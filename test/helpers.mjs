@@ -50,7 +50,8 @@ function wireReply(res, payload, kind, isOpenAI) {
 export async function fixture(t, {
   responses = ["refusal", "success"], initial = PRIMARY, chain = [FIRST, SECOND],
   models = [PRIMARY, FIRST, SECOND], noAuth = [], priorBoundaryEntry = false,
-  wire = false, fileConfig = false, invalidConfig = false,
+  wire = false, fileConfig = false, invalidConfig = false, onRequest, ui = false, retryMessages,
+  priorContinuation = false, omitUserContext = false,
 } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "pi-refusal-fallback-test-"));
   const envKeys = ["PI_REFUSAL_FALLBACK_CHAIN", "PI_REFUSAL_FALLBACK_CONFIG", "PI_REFUSAL_FALLBACK_DEBUG"];
@@ -77,7 +78,7 @@ export async function fixture(t, {
   if (fileConfig || invalidConfig) {
     delete process.env.PI_REFUSAL_FALLBACK_CHAIN;
     await writeFile(process.env.PI_REFUSAL_FALLBACK_CONFIG,
-      invalidConfig ? "not valid JSON" : JSON.stringify({ chain }));
+      invalidConfig ? "not valid JSON" : JSON.stringify({ chain, ...(retryMessages === undefined ? {} : { retryMessages }) }));
   } else {
     process.env.PI_REFUSAL_FALLBACK_CHAIN = chain.map(key).join(",");
   }
@@ -85,6 +86,7 @@ export async function fixture(t, {
   const wireCalls = [];
   const errors = [];
   const events = [];
+  const uiEvents = [];
   if (wire) {
     server = createServer(async (req, res) => {
       try {
@@ -117,7 +119,14 @@ export async function fixture(t, {
       usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, ...overrides };
     const stream = new AssistantMessageEventStream();
-    queueMicrotask(() => {
+    const number = calls.length;
+    queueMicrotask(async () => {
+      try {
+        await onRequest?.({ number, model, session, runtime });
+      } catch {
+        message.stopReason = "error";
+        message.errorMessage = "Test request callback failed";
+      }
       stream.push({ type: "start", partial: message });
       if (message.stopReason === "error" || message.stopReason === "aborted") {
         stream.push({ type: "error", reason: message.stopReason, error: message });
@@ -139,6 +148,21 @@ export async function fixture(t, {
   const settingsManager = SettingsManager.inMemory({ retry: { enabled: false }, compaction: { enabled: false },
     cacheWarming: "off", enableInstallTelemetry: false, enableAnalytics: false });
   const paths = [];
+  if (priorContinuation || omitUserContext) {
+    const priorPath = join(dir, "prior-context.ts");
+    await writeFile(priorPath, `export default function (pi) {
+      let handled = false;
+      pi.on("agent_before_settle", (event) => {
+        if (handled || event.outcome !== "error") return;
+        handled = true;
+        const target = event.context.contextEntries.find((entry) =>
+          entry.sourceEntry.type === "message" && entry.sourceEntry.message.role === ${JSON.stringify(omitUserContext ? "user" : "assistant")});
+        return { entries: [...event.entries, { type: "context_edit", targetId: target.sourceEntry.id, replacement: null }],
+          continue: ${JSON.stringify(priorContinuation)} };
+      });
+    }`);
+    paths.push(priorPath);
+  }
   if (priorBoundaryEntry) {
     const priorPath = join(dir, "prior-boundary.ts");
     await writeFile(priorPath, `export default function (pi) {
@@ -160,7 +184,13 @@ export async function fixture(t, {
     model: runtime.getModel(initial.provider, initial.id), thinkingLevel: "high", resourceLoader, settingsManager,
     sessionManager: SessionManager.inMemory(dir), tools: [] });
   session = result.session;
-  await session.bindExtensions({ mode: "print", onError: (error) => errors.push(error) });
+  await session.bindExtensions({ mode: ui ? "rpc" : "print", onError: (error) => errors.push(error),
+    ...(ui ? { uiContext: {
+      notify: (message, severity) => uiEvents.push({ type: "notify", message, severity }),
+      setStatus: (key, text) => uiEvents.push({ type: "status", key, text }),
+      select: async () => undefined, confirm: async () => false,
+    } } : {}),
+  });
   session.subscribe((event) => events.push(event));
-  return { session, calls, wireCalls, errors, events, runtime, settingsManager };
+  return { session, calls, wireCalls, errors, events, uiEvents, runtime, settingsManager };
 }

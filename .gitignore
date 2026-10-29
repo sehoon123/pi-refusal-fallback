@@ -3,6 +3,8 @@ coverage/
 dist/
 *.tgz
 *.log
+*.bak
+.refusal-fallback-*.tmp
 .env
 .env.*
 !.env.example

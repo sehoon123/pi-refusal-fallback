@@ -1,24 +1,34 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { lstat, mkdir, open, rename, unlink } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { modelKey } from "./refusal.ts";
 
-export interface ChainEntry {
-  provider: string;
-  id: string;
-}
-
+export interface ChainEntry { provider: string; id: string }
 export interface Configuration {
   chain: ChainEntry[];
   source: "environment" | "file" | "none";
+  retryMessages?: boolean;
+  showStatus?: boolean;
+  notifications?: boolean;
 }
+export interface ConfigOptions { agentDir: string; env?: NodeJS.ProcessEnv; cwd?: string }
+export const MAX_CONFIG_BYTES = 65_536;
+export const MAX_CHAIN_ENTRIES = 128;
+const optionNames = ["retryMessages", "showStatus", "notifications"] as const;
 
 function identifier(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0 && !/[\u0000-\u001f\u007f]/.test(value.trim());
+  return typeof value === "string" && value.trim().length > 0 && value.length <= 1024 &&
+    !/[\u0000-\u001f\u007f]/.test(value.trim());
 }
-
 function parseChain(value: unknown): ChainEntry[] {
-  if (!Array.isArray(value)) throw new Error("The configuration must contain a chain array.");
-  return value.map((entry: unknown, index: number) => {
+  if (!Array.isArray(value) || value.length > MAX_CHAIN_ENTRIES) {
+    throw new Error(`The chain must be an array with at most ${MAX_CHAIN_ENTRIES} entries.`);
+  }
+  const seen = new Set<string>();
+  const result: ChainEntry[] = [];
+  value.forEach((entry: unknown, index: number) => {
     if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
       throw new Error(`Chain entry ${index + 1} must be an object with provider and id strings.`);
     }
@@ -27,52 +37,102 @@ function parseChain(value: unknown): ChainEntry[] {
         !identifier(item.provider) || !identifier(item.id)) {
       throw new Error(`Chain entry ${index + 1} must contain only nonempty provider and id strings.`);
     }
-    return { provider: item.provider.trim(), id: item.id.trim() };
+    const model = { provider: item.provider.trim(), id: item.id.trim() };
+    const key = modelKey(model);
+    if (!seen.has(key)) { seen.add(key); result.push(model); }
   });
+  return result;
 }
-
-/** No built-in providers or models. An empty environment value explicitly disables fallback. */
-export function readConfiguration(options: {
-  agentDir: string;
-  env?: NodeJS.ProcessEnv;
-  cwd?: string;
-}): Configuration {
+function document(value: unknown): Omit<Configuration, "source"> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("The configuration must be an object with a chain array.");
+  }
+  const item = value as Record<string, unknown>;
+  if (Object.keys(item).some((key) => key !== "chain" && !optionNames.includes(key as typeof optionNames[number]))) {
+    throw new Error("Unknown configuration field; use chain, retryMessages, showStatus and notifications only.");
+  }
+  const result: Omit<Configuration, "source"> = { chain: parseChain(item.chain) };
+  for (const key of optionNames) {
+    if (item[key] !== undefined) {
+      if (typeof item[key] !== "boolean") throw new Error(`The ${key} option must be a boolean.`);
+      result[key] = item[key];
+    }
+  }
+  return result;
+}
+export function configurationPath(options: ConfigOptions): string {
+  const requested = (options.env ?? process.env).PI_REFUSAL_FALLBACK_CONFIG ?? join(options.agentDir, "refusal-fallback.json");
+  const expanded = requested.startsWith("~/") ? join(homedir(), requested.slice(2)) : requested;
+  return resolve(options.cwd ?? process.cwd(), expanded);
+}
+function boundedRead(path: string): Buffer {
+  const info = statSync(path);
+  if (!info.isFile() || info.size > MAX_CONFIG_BYTES) throw new Error("Configuration must be a regular file no larger than 64 KiB.");
+  const bytes = readFileSync(path);
+  if (bytes.length > MAX_CONFIG_BYTES) throw new Error("Configuration must be no larger than 64 KiB.");
+  return bytes;
+}
+/** No provider/model presets. Reads once at load or explicit reload, never per token/turn. */
+export function readConfiguration(options: ConfigOptions): Configuration {
   const env = options.env ?? process.env;
   if (env.PI_REFUSAL_FALLBACK_CHAIN !== undefined) {
     const raw = env.PI_REFUSAL_FALLBACK_CHAIN.trim();
+    if (Buffer.byteLength(raw) > MAX_CONFIG_BYTES) throw new Error("Environment chain must be no larger than 64 KiB.");
     if (!raw) return { chain: [], source: "environment" };
     const entries = raw.split(",").map((part, index) => {
       const separator = part.indexOf("/");
       if (separator < 1) throw new Error(`Environment chain entry ${index + 1} must use provider/model-id.`);
-      // Model IDs can contain additional slashes; split only at the first one.
       return { provider: part.slice(0, separator), id: part.slice(separator + 1) };
     });
     return { chain: parseChain(entries), source: "environment" };
   }
-
-  const override = env.PI_REFUSAL_FALLBACK_CONFIG;
-  const requestedPath = override ?? join(options.agentDir, "refusal-fallback.json");
-  const expandedPath = requestedPath.startsWith("~/") ? join(homedir(), requestedPath.slice(2)) : requestedPath;
-  const configPath = resolve(options.cwd ?? process.cwd(), expandedPath);
-  let text: string;
+  let bytes: Buffer;
   try {
-    text = readFileSync(configPath, "utf8");
+    bytes = boundedRead(configurationPath(options));
   } catch (error) {
-    if (override === undefined && (error as NodeJS.ErrnoException).code === "ENOENT") {
+    if (env.PI_REFUSAL_FALLBACK_CONFIG === undefined && (error as NodeJS.ErrnoException).code === "ENOENT") {
       return { chain: [], source: "none" };
     }
-    throw new Error("Cannot read the refusal-fallback configuration file.");
+    // File contents, paths and arbitrary system errors must not leak through diagnostics.
+    throw new Error("Cannot read configuration: use an accessible regular file no larger than 64 KiB.");
   }
   let value: unknown;
+  try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
+  catch { throw new Error("The refusal-fallback configuration file is not valid JSON/UTF-8."); }
+  return { ...document(value), source: "file" };
+}
+async function atomicWrite(path: string, data: string | Buffer): Promise<void> {
+  const temporary = join(dirname(path), `.refusal-fallback-${randomBytes(12).toString("hex")}.tmp`);
+  const handle = await open(temporary, "wx", 0o600);
+  let closed = false;
   try {
-    value = JSON.parse(text);
-  } catch {
-    // Do not echo input: a mistaken configuration can contain secrets.
-    throw new Error("The refusal-fallback configuration file is not valid JSON.");
+    await handle.writeFile(data);
+    await handle.sync();
+    await handle.close();
+    closed = true;
+    await rename(temporary, path);
+  } finally {
+    if (!closed) await handle.close().catch(() => undefined);
+    await unlink(temporary).catch(() => undefined);
   }
-  if (value === null || typeof value !== "object" || Array.isArray(value) ||
-      Object.keys(value).some((key) => key !== "chain")) {
-    throw new Error("The configuration must be an object containing only a chain array.");
+}
+/** Explicit setup command only: validated, private, atomic and cancellation-safe. */
+export async function saveConfiguration(options: ConfigOptions, value: unknown): Promise<void> {
+  if ((options.env ?? process.env).PI_REFUSAL_FALLBACK_CHAIN !== undefined) {
+    throw new Error("The environment chain overrides files. Unset it before using setup.");
   }
-  return { chain: parseChain((value as Record<string, unknown>).chain), source: "file" };
+  const parsed = document(value);
+  const serialized = `${JSON.stringify(parsed, null, 2)}\n`;
+  if (Buffer.byteLength(serialized) > MAX_CONFIG_BYTES) throw new Error("Configuration must be no larger than 64 KiB.");
+  const path = configurationPath(options);
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const existing = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw new Error("Cannot inspect the configuration file.");
+  });
+  if (existing) {
+    if (!existing.isFile()) throw new Error("Setup does not replace symlinks or special files; edit them manually.");
+    await atomicWrite(`${path}.bak`, boundedRead(path));
+  }
+  await atomicWrite(path, serialized);
 }

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { readConfiguration } from "../src/config.ts";
+import { MAX_CONFIG_BYTES, readConfiguration, saveConfiguration } from "../src/config.ts";
 
 const chain = [{ provider: "example-provider", id: "fallback-a" }, { provider: "other-provider", id: "organization/fallback-b" }];
 async function directory(t) {
@@ -76,4 +76,71 @@ test("an empty JSON chain explicitly disables fallback", async (t) => {
   const agentDir = await directory(t);
   await writeFile(join(agentDir, "refusal-fallback.json"), JSON.stringify({ chain: [] }));
   assert.deepEqual(readConfiguration({ agentDir, env: {} }), { source: "file", chain: [] });
+});
+
+test("UI options are validated and duplicate models are normalized once", async (t) => {
+  const agentDir = await directory(t);
+  const options = { retryMessages: false, showStatus: true, notifications: false };
+  await writeFile(join(agentDir, "refusal-fallback.json"), JSON.stringify({ chain: [chain[0], chain[0], chain[1]], ...options }));
+  assert.deepEqual(readConfiguration({ agentDir, env: {} }), { source: "file", chain, ...options });
+  await writeFile(join(agentDir, "refusal-fallback.json"), JSON.stringify({ chain, retryMessages: "false" }));
+  assert.throws(() => readConfiguration({ agentDir, env: {} }), /boolean/);
+});
+
+test("configuration and chain size limits reject excessive work safely", async (t) => {
+  const agentDir = await directory(t);
+  await writeFile(join(agentDir, "refusal-fallback.json"), " ".repeat(MAX_CONFIG_BYTES + 1));
+  assert.throws(() => readConfiguration({ agentDir, env: {} }), /64 KiB/);
+  assert.throws(() => readConfiguration({ agentDir, env: { PI_REFUSAL_FALLBACK_CHAIN: "a/" + "b".repeat(MAX_CONFIG_BYTES) } }), /64 KiB/);
+  await writeFile(join(agentDir, "refusal-fallback.json"), JSON.stringify({ chain: Array(129).fill(chain[0]) }));
+  assert.throws(() => readConfiguration({ agentDir, env: {} }), /128/);
+});
+
+test("invalid UTF-8 and directories are rejected without dumping input", async (t) => {
+  const agentDir = await directory(t);
+  await writeFile(join(agentDir, "refusal-fallback.json"), Buffer.from([0xff, 0xfe]));
+  assert.throws(() => readConfiguration({ agentDir, env: {} }), /JSON\/UTF-8/);
+  assert.throws(() => readConfiguration({ agentDir, env: { PI_REFUSAL_FALLBACK_CONFIG: agentDir } }), /regular file/);
+});
+
+test("setup writes atomically, keeps a private backup, and leaves no temporary files", async (t) => {
+  const agentDir = await directory(t);
+  const path = join(agentDir, "refusal-fallback.json");
+  const old = JSON.stringify({ chain: [] });
+  await writeFile(path, old);
+  await saveConfiguration({ agentDir, env: {} }, { chain, retryMessages: false });
+  assert.deepEqual(readConfiguration({ agentDir, env: {} }).chain, chain);
+  assert.equal(await readFile(`${path}.bak`, "utf8"), old);
+  if (process.platform !== "win32") {
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+    assert.equal((await stat(`${path}.bak`)).mode & 0o777, 0o600);
+  }
+  assert.ok(!(await readdir(agentDir)).some((name) => name.endsWith(".tmp")));
+});
+
+test("setup never writes an ignored environment-overridden config", async (t) => {
+  const agentDir = await directory(t);
+  await assert.rejects(saveConfiguration({ agentDir, env: { PI_REFUSAL_FALLBACK_CHAIN: "" } }, { chain }), /overrides/);
+  assert.deepEqual(await readdir(agentDir), []);
+});
+
+test("setup does not replace existing config symlinks", { skip: process.platform === "win32" }, async (t) => {
+  const agentDir = await directory(t);
+  const target = join(agentDir, "target.json");
+  const old = JSON.stringify({ chain: [] });
+  await writeFile(target, old);
+  await symlink(target, join(agentDir, "refusal-fallback.json"));
+  await assert.rejects(saveConfiguration({ agentDir, env: {} }, { chain }), /symlinks/);
+  assert.equal(await readFile(target, "utf8"), old);
+});
+
+test("failed backup replacement leaves the original intact and cleans temporary files", async (t) => {
+  const agentDir = await directory(t);
+  const path = join(agentDir, "refusal-fallback.json");
+  const old = JSON.stringify({ chain: [] });
+  await writeFile(path, old);
+  await mkdir(`${path}.bak`);
+  await assert.rejects(saveConfiguration({ agentDir, env: {} }, { chain }));
+  assert.equal(await readFile(path, "utf8"), old);
+  assert.ok(!(await readdir(agentDir)).some((name) => name.endsWith(".tmp")));
 });

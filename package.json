@@ -1,6 +1,6 @@
 {
   "name": "pi-refusal-fallback",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Bounded provider-refusal recovery for Pi with user-selected fallback models",
   "type": "module",
   "license": "MIT",
@@ -13,7 +13,7 @@
   "bugs": { "url": "https://github.com/sehoon123/pi-refusal-fallback/issues" },
   "keywords": ["pi-package", "pi-extension", "fallback", "model-routing"],
   "engines": { "node": ">=22.19.0" },
-  "files": ["src", "examples", "README.md", "README.ko.md", "LICENSE"],
+  "files": ["src", "examples", "README.md", "README.ko.md", "CHANGELOG.md", "LICENSE"],
   "pi": { "extensions": ["./src/index.ts"] },
   "scripts": {
     "check": "tsc --noEmit",
