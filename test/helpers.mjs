@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 
 const packageDir = process.env.PI_REFUSAL_TEST_PACKAGE_DIR ??
   fileURLToPath(new URL("../node_modules/@earendil-works/pi-coding-agent/", import.meta.url));
@@ -51,7 +52,7 @@ export async function fixture(t, {
   responses = ["refusal", "success"], initial = PRIMARY, chain = [FIRST, SECOND],
   models = [PRIMARY, FIRST, SECOND], noAuth = [], priorBoundaryEntry = false,
   wire = false, fileConfig = false, invalidConfig = false, onRequest, ui = false, retryMessages,
-  priorContinuation = false, omitUserContext = false,
+  priorContinuation = false, omitUserContext = false, setupKeys = [],
 } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "pi-refusal-fallback-test-"));
   const envKeys = ["PI_REFUSAL_FALLBACK_CHAIN", "PI_REFUSAL_FALLBACK_CONFIG", "PI_REFUSAL_FALLBACK_DEBUG"];
@@ -189,6 +190,17 @@ export async function fixture(t, {
       notify: (message, severity) => uiEvents.push({ type: "notify", message, severity }),
       setStatus: (key, text) => uiEvents.push({ type: "status", key, text }),
       select: async () => undefined, confirm: async () => false,
+      // Same contract as the Pi TUI / pi-web hosts: run the factory, feed raw terminal keys.
+      custom: async (factory) => {
+        const keys = setupKeys.shift();
+        if (!keys) return undefined;
+        let result;
+        const component = await factory({ requestRender() {}, terminal: { rows: 24, columns: 100 } },
+          { fg: (_color, text) => text, bold: (text) => text }, new KeybindingsManager(TUI_KEYBINDINGS), (value) => { result = value; });
+        for (const key of keys) { component.handleInput(key); if (result) break; }
+        component.dispose?.();
+        return result;
+      },
     } } : {}),
   });
   session.subscribe((event) => events.push(event));

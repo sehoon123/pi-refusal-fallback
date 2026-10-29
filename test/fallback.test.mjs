@@ -24,6 +24,34 @@ test("error turn sends an actual second SDK request before final settlement", as
   assert.ok(!retryContext.some((message) => message.role === "assistant" && message.rawStopReason === "refusal"));
   assert.equal(retryContext.at(-1).role, "user");
   assert.ok(session.sessionManager.getBranch().some((entry) => entry.type === "message" && entry.message.rawStopReason === "refusal"));
+  // The notice is for people: shown and persisted, never sent to any provider.
+  assert.match(notices(session)[0].content, /^\[refusal-fallback\] test-provider-a\/primary declined this request\. Retrying with test-provider-a\/fallback-a \(fallback 1\)\.$/);
+  assert.ok(calls.every((call) => !JSON.stringify(call.messages).includes("[refusal-fallback]")));
+});
+
+test("retry notices stay out of every later request in the same conversation", async (t) => {
+  const { session, calls, errors } = await fixture(t, { responses: ["refusal", "success", "success"] });
+  await session.prompt(prompt);
+  await session.prompt("A second, unrelated harmless prompt.");
+  assert.equal(notices(session).length, 1);
+  assert.deepEqual(modelsCalled(calls), [key(PRIMARY), key(FIRST), key(PRIMARY)]);
+  assert.ok(calls.every((call) => !JSON.stringify(call.messages).includes("declined this request")));
+  assert.equal(calls[2].messages.at(-1).role, "user", "the real follow-up request is last");
+  assert.deepEqual(errors, []);
+});
+
+test("setup saves a new order that the very next request uses, with no restart", async (t) => {
+  const { session, calls, errors, uiEvents } = await fixture(t, {
+    fileConfig: true, chain: [FIRST], ui: true, responses: ["refusal", "refusal", "success"],
+    // Models sorted: fallback-a, primary, fallback-b. Down+Down+Enter adds fallback-b after the existing fallback-a.
+    setupKeys: [["\x1b[B", "\x1b[B", "\r", "\x13"]],
+  });
+  await session.prompt("/refusal-fallback setup");
+  assert.ok(uiEvents.some((event) => event.type === "notify" && event.message.includes("Saved 2 fallback model(s): fallback-a → fallback-b")));
+  await session.prompt(prompt);
+  assert.deepEqual(modelsCalled(calls), [key(PRIMARY), key(FIRST), key(SECOND)]);
+  assert.equal(key(session.model), key(PRIMARY));
+  assert.deepEqual(errors, []);
 });
 
 test("normal success does not switch models or add notices", async (t) => {
@@ -250,7 +278,7 @@ test("quiet mode continues without injecting retry notices into model context", 
   const statuses = uiEvents.filter((event) => event.type === "status").map((event) => event.text);
   assert.ok(statuses.some((text) => text?.includes("fallback 1/2")));
   assert.ok(statuses.some((text) => text?.includes("fallback 2/2")));
-  assert.ok(statuses.at(-1).includes("restored"));
+  assert.equal(statuses.at(-1), undefined, "a clean, restored run clears the stale footer text");
   assert.ok(statuses.every((text, index) => index === 0 || text !== statuses[index - 1]));
   assert.deepEqual(errors, []);
 });
@@ -343,4 +371,28 @@ test("a missing runnable context leaves the refusal intact instead of fabricatin
   assert.equal(lastReport(session).outcome, "no-context");
   assert.ok(uiEvents.some((event) => event.type === "notify" && event.message.includes("Cannot retry")));
   assert.deepEqual(errors, []);
+});
+
+test("abnormal endings keep a plain-language footer status until the next run", async (t) => {
+  const { session, uiEvents, errors } = await fixture(t, { ui: true, chain: [FIRST], responses: ["refusal", "refusal"] });
+  await session.prompt(prompt);
+  const statuses = uiEvents.filter((event) => event.type === "status").map((event) => event.text);
+  assert.match(statuses.at(-1), /^fallback exhausted · 1 retry · model restored$/);
+  await session.prompt("/refusal-fallback status");
+  assert.deepEqual(errors, []);
+});
+
+test("the transcript notice has a compact terminal renderer and never a duplicated header", async (t) => {
+  const { session } = await fixture(t);
+  const rendered = [];
+  const runner = session._extensionRunner;
+  const renderer = runner.getMessageRenderer?.("refusal-fallback") ?? [...runner.extensions].map((ext) => ext.messageRenderers?.get("refusal-fallback")).find(Boolean);
+  assert.equal(typeof renderer, "function");
+  const component = renderer({ role: "custom", customType: "refusal-fallback", display: true, timestamp: 0,
+    content: "[refusal-fallback] a/b declined this request. Retrying with c/d (fallback 1)." },
+    { expanded: false, outputPad: 1 }, { fg: (_color, text) => text, bold: (text) => text });
+  rendered.push(...component.render(80));
+  const text = rendered.join("\n");
+  assert.match(text, /↻ a\/b declined this request\. Retrying with c\/d \(fallback 1\)\./);
+  assert.ok(!text.includes("[refusal-fallback]"));
 });

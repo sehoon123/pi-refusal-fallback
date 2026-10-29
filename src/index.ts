@@ -2,6 +2,7 @@
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { convertToLlm, getAgentDir, type ExtensionAPI, type ExtensionContext, type SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { readConfiguration, type Configuration } from "./config.ts";
 import { registerCommands } from "./commands.ts";
 import { isRefusal, modelKey, modelLabel } from "./refusal.ts";
@@ -20,7 +21,7 @@ interface Run {
   externalSelection?: Model;
   externalRevision: number;
   hadRefusal: boolean;
-  pending?: { entryId: string; key: string };
+  pending?: { entryId: string; key: string; label: string };
   nextIndex: number;
   attempted: Set<string>;
   targets: string[];
@@ -29,6 +30,7 @@ interface Run {
 }
 const statusKey = "refusal-fallback";
 const summaryType = "refusal-fallback-run";
+const noticeType = "refusal-fallback";
 
 export default function refusalFallback(pi: ExtensionAPI): void {
   const agentDir = getAgentDir();
@@ -83,6 +85,20 @@ export default function refusalFallback(pi: ExtensionAPI): void {
     }
     return true;
   };
+  // The retry notice is for people. Keeping it out of every provider request avoids
+  // a trailing pseudo-user message that can displace the real request, and saves tokens.
+  pi.on("context", (event) => {
+    if (!event.messages.some((message) => message.role === "custom" && message.customType === noticeType)) return;
+    return { messages: event.messages.filter((message) => !(message.role === "custom" && message.customType === noticeType)) };
+  });
+  // One compact line in the terminal. Hosts without renderer support show the same text unchanged.
+  if (typeof pi.registerMessageRenderer === "function") {
+    pi.registerMessageRenderer(noticeType, (message, options, theme) => {
+      const raw = typeof message.content === "string" ? message.content
+        : message.content.map((block) => (block.type === "text" ? block.text : "")).join("");
+      return new Text(theme.fg("warning", "↻ ") + theme.fg("muted", raw.replace(/^\[refusal-fallback\]\s*/, "")), options.outputPad, 0);
+    });
+  }
   reload();
   registerCommands(pi, agentDir, {
     getConfig: () => config, getError: () => configError, getLastSummary: () => lastSummary,
@@ -137,7 +153,11 @@ export default function refusalFallback(pi: ExtensionAPI): void {
     if (message.stopReason === "aborted" || ctx.signal?.aborted) { currentRun.outcome = "aborted"; return; }
     currentRun.outcome = message.stopReason === "error" ? "failed" : "completed";
     if (!refused) return;
-    currentRun.pending = { entryId: event.messageEntryId, key: modelKey({ provider: message.provider, id: message.model }) };
+    currentRun.pending = {
+      entryId: event.messageEntryId,
+      key: modelKey({ provider: message.provider, id: message.model }),
+      label: modelLabel({ provider: message.provider, id: message.model }),
+    };
     log(`refusal recorded; fallback count=${currentRun.targets.length}`);
   });
 
@@ -199,8 +219,8 @@ export default function refusalFallback(pi: ExtensionAPI): void {
         ...event.entries, { type: "context_edit", targetId: refused.entryId, replacement: null },
       ];
       if (currentRun.config.retryMessages !== false) entries.push({
-        type: "custom_message", customType: "refusal-fallback", display: true,
-        content: `[refusal-fallback] Retry ${currentRun.targets.length}/${currentRun.config.chain.length}: ${modelLabel(entry)}.`,
+        type: "custom_message", customType: noticeType, display: true,
+        content: `[refusal-fallback] ${refused.label} declined this request. Retrying with ${modelLabel(entry)} (fallback ${currentRun.targets.length}).`,
       });
       return { entries, continue: true };
     }
@@ -239,7 +259,8 @@ export default function refusalFallback(pi: ExtensionAPI): void {
       lastSummary = `Last run: ${outcome}; ${currentRun.targets.length} fallback(s), ${currentRun.skipped.length} skipped; ${elapsedMs} ms; model ${restoration}.`;
       const skipped = currentRun.skipped.slice(0, 10).map((entry) => `entry ${entry.entry}: ${entry.reason}`).join(", ");
       if (skipped) lastSummary += `\nSkipped: ${skipped}${currentRun.skipped.length > 10 ? ` (+${currentRun.skipped.length - 10} more)` : ""}`;
-      status(ctx, `fallback ${outcome}: ${currentRun.targets.length} hop(s) · ${restoration}`);
+      const clean = outcome === "completed" && (restoration === "restored" || restoration === "not-needed");
+      status(ctx, clean ? undefined : `fallback ${outcome} · ${currentRun.targets.length} retr${currentRun.targets.length === 1 ? "y" : "ies"} · model ${restoration}`);
       try {
         pi.appendEntry(summaryType, { version: 1, summary: lastSummary, outcome, restoration, elapsedMs,
           source: currentRun.source ? modelLabel(currentRun.source) : undefined,

@@ -1,6 +1,29 @@
 # Changelog
 
+## 0.3.0
+
+### Fixed
+
+- **`/refusal-fallback setup` could not scroll.** Pi's built-in `select` draws every option with no viewport (terminal), and pi-web renders custom components into a plain text block, so with dozens of models the highlighted row left the screen and the list never followed it. Reproduced in a real `pi` TUI (25 x Down made the cursor vanish) and fixed with a dedicated editor that always draws a bounded window around the highlighted row.
+- **Double Enter.** Argument completion kept a one-item popup open after a subcommand was fully typed, so the first Enter was swallowed. A fully typed subcommand now runs immediately.
+- The save message claimed a `.bak` file was kept even on a first save. It now says so only when a previous file existed.
+- The footer kept a stale `fallback completed` text after every clean run; it is now cleared, and unusual endings use a plain-language status.
+
+### Changed
+
+- **Retry notices are never sent to a model.** They were custom messages that Pi converts to a trailing pseudo-user message; with a terse notice a model could treat it as the latest request. A `context` handler now removes them from every provider request (including notices stored by earlier versions). `retryMessages` therefore only controls whether the one-line notice is shown.
+- The notice names the model that declined and the model being tried, and renders as one compact line in the terminal UI instead of a duplicated header with blank lines.
+
+### Added
+
+- Setup editor with four sections (Models, Order, Options, Review): fuzzy search, add/remove, pick-up-and-move ordering with undo, option toggles, a final review, `Ctrl+S`, discard confirmation, mouse wheel/click support, and a starting point equal to your current configuration (entries that are temporarily unavailable are kept until you remove them).
+- Page-by-page fallback (seven choices per page) for clients that cannot host custom components.
+- `/refusal-fallback` argument completion; the status output lists the configuration file and the setup hint.
+- `npm run test:e2e`: drives the real `pi` TUI in a private tmux server (its own socket; never the default server).
+- 101 offline tests (Pi 1.2.0 and 1.4.0), including windowing at many catalog sizes and widths.
+
 ## 0.2.0
+
 
 ### Stability
 

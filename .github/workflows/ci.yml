@@ -18,7 +18,11 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Select tested Pi host
         if: matrix.pi-version != '1.4.0'
-        run: npm install --no-save --package-lock=false --ignore-scripts @earendil-works/pi-coding-agent@${{ matrix.pi-version }} @earendil-works/pi-agent-core@${{ matrix.pi-version }} @earendil-works/pi-ai@${{ matrix.pi-version }}
+        run: npm install --no-save --package-lock=false --ignore-scripts @earendil-works/pi-coding-agent@${{ matrix.pi-version }} @earendil-works/pi-agent-core@${{ matrix.pi-version }} @earendil-works/pi-ai@${{ matrix.pi-version }} @earendil-works/pi-tui@${{ matrix.pi-version }}
       - run: npm run check
       - run: npm test
+      - name: Real terminal smoke test (private tmux server)
+        run: |
+          command -v tmux >/dev/null || sudo apt-get install -y --no-install-recommends tmux
+          npm run test:e2e
       - run: npm pack --dry-run

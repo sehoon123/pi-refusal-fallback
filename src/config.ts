@@ -116,8 +116,8 @@ async function atomicWrite(path: string, data: string | Buffer): Promise<void> {
     await unlink(temporary).catch(() => undefined);
   }
 }
-/** Explicit setup command only: validated, private, atomic and cancellation-safe. */
-export async function saveConfiguration(options: ConfigOptions, value: unknown): Promise<void> {
+/** Explicit setup command only: validated, private, atomic and cancellation-safe. Returns whether an earlier file was kept as .bak. */
+export async function saveConfiguration(options: ConfigOptions, value: unknown): Promise<{ backedUp: boolean }> {
   if ((options.env ?? process.env).PI_REFUSAL_FALLBACK_CHAIN !== undefined) {
     throw new Error("The environment chain overrides files. Unset it before using setup.");
   }
@@ -135,4 +135,5 @@ export async function saveConfiguration(options: ConfigOptions, value: unknown):
     await atomicWrite(`${path}.bak`, boundedRead(path));
   }
   await atomicWrite(path, serialized);
+  return { backedUp: existing !== undefined };
 }
